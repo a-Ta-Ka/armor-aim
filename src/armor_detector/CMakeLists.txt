@@ -13,6 +13,7 @@ find_package(catkin REQUIRED COMPONENTS
   rospy
   sensor_msgs
   std_msgs
+  image_transport
 )
 
 find_package(OpenCV REQUIRED)
@@ -109,7 +110,7 @@ find_package(OpenCV REQUIRED)
 catkin_package(
  INCLUDE_DIRS include
 #  LIBRARIES armor_detector
- CATKIN_DEPENDS cv_bridge roscpp rospy sensor_msgs std_msgs
+ CATKIN_DEPENDS cv_bridge roscpp rospy sensor_msgs std_msgs image_transport
 #  DEPENDS system_lib
 )
 
