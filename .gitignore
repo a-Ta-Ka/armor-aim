@@ -6,3 +6,6 @@ build*/
 devel*/
 install*/
 *.bag
+frames/
+__pycache__/
+scripts/hsv_tune

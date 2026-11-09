@@ -14,6 +14,7 @@ find_package(catkin REQUIRED COMPONENTS
   sensor_msgs
   std_msgs
   image_transport
+  nodelet
 )
 
 find_package(OpenCV REQUIRED)
@@ -109,8 +110,8 @@ find_package(OpenCV REQUIRED)
 ## DEPENDS: system dependencies of this project that dependent projects also need
 catkin_package(
  INCLUDE_DIRS include
-#  LIBRARIES armor_detector
- CATKIN_DEPENDS cv_bridge roscpp rospy sensor_msgs std_msgs image_transport
+ LIBRARIES armor_detector
+ CATKIN_DEPENDS cv_bridge roscpp rospy sensor_msgs std_msgs image_transport nodelet
 #  DEPENDS system_lib
 )
 
@@ -121,7 +122,7 @@ catkin_package(
 ## Specify additional locations of header files
 ## Your package locations should be listed before other locations
 include_directories(
-# include
+include
   ${catkin_INCLUDE_DIRS}
   ${OpenCV_INCLUDE_DIRS}
 )
@@ -139,7 +140,20 @@ include_directories(
 ## Declare a C++ executable
 ## With catkin_make all packages are built within a single CMake context
 ## The recommended prefix ensures that target names across packages don't collide
-add_executable(camera_node src/camera_node.cpp)
+
+add_library(${PROJECT_NAME}
+    src/camera_nodelet.cpp
+    src/detector_nodelet.cpp
+ )
+
+target_link_libraries(${PROJECT_NAME}
+  ${OpenCV_LIBS}
+  ${catkin_LIBRARIES}
+)
+
+add_dependencies(${PROJECT_NAME}
+  ${${PROJECT_NAME}_EXPORTED_TARGETS}
+  ${catkin_EXPORTED_TARGETS})
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
@@ -152,10 +166,6 @@ add_executable(camera_node src/camera_node.cpp)
 # add_dependencies(${PROJECT_NAME}_node ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Specify libraries to link a library or executable target against
-target_link_libraries(camera_node
-  ${OpenCV_LIBS}
-  ${catkin_LIBRARIES}
-)
 
 #############
 ## Install ##

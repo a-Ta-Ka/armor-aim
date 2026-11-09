@@ -7,7 +7,11 @@
       },
       "includePath": [
         "/opt/ros/noetic/include/**",
-        "/usr/include/**"
+        "/usr/include/**",
+        "/usr/include/opencv4/**",
+        "/root/vision_ws/devel/include/**",
+        "/root/vision_ws/src/armor_detector/include/**",
+        "/root/vision_ws/src/**"
       ],
       "name": "ROS",
       "intelliSenseMode": "gcc-x64",

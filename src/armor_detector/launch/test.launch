@@ -1,17 +1,38 @@
 <launch>
-
-    <arg name="bag" default="/root/bags/blue_guard.bag" />
-
-    <node pkg="armor_detector" type="camera_node" name="camera_node" output="screen">
-        <param name="image_topic" value="/hk_camera/image_raw" />
-        <param name="camera_info_topic" value="/hk_camera/camera_info" />
-        <param name="debug_topic" value="/ft/debug/image" />
-        <param name="queue_size" value="1" />
-    </node>
+    <arg name="bag" default="/root/bags/red_1&amp;3_with_detection.bag" />
+    <param name="/use_sim_time" value="true" />
 
     <node pkg="rosbag" type="play" name="rosbag_play" output="screen"
-          args="-l $(arg bag)" />
+          args="--clock $(arg bag)" />
 
-    <node pkg="rqt_image_view" type="rqt_image_view" name="rqt_image_view" output="screen" args="/ft/debug/image" />
+    <node pkg="nodelet" type="nodelet" name="armor_manager"
+      args="manager" output="screen"/>
 
+    <node pkg="nodelet" type="nodelet" name="camera" args="load armor_detector/CameraNodelet armor_manager" output="screen">
+        <param name="image_topic" value="/hk_camera/image_raw"/>
+        <param name="camera_info_topic" value="/hk_camera/camera_info"/>
+       <param name="debug_topic" value="/ft/debug/image"/>
+       <param name="queue_size" value="1"/>
+    </node>
+
+    <node pkg="nodelet" type="nodelet" name="detector"
+      args="load armor_detector/DetectorNodelet armor_manager" output="screen">
+        <param name="input_topic" value="/ft/debug/image" />
+        <param name="debug_topic" value="/ft/detector/image" />
+        <param name="queue_size" value="1" />
+        <param name="BH_MIN" value="80" />
+        <param name="BH_MAX" value="120" />
+        <param name="RH_MIN" value="0" />
+        <param name="RH_MAX" value="40" />
+        <param name="RH2_MIN" value="170" />
+        <param name="RH2_MAX" value="179" />
+        <param name="S_MIN" value="80" />
+        <param name="S_MAX" value="255" />
+        <param name="V_MIN" value="160" />
+        <param name="V_MAX" value="255" />
+        <param name="min_area" value="10" />
+    </node>
+
+    <node pkg="rqt_image_view" type="rqt_image_view" name="rqt_image_view"
+          output="screen" args="/ft/detector/image" />
 </launch>
