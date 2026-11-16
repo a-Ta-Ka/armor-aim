@@ -3,7 +3,7 @@
 // cd /root/vision_ws/scripts && ./hsv_tune
 
 // cd / root / vision_ws / scripts g++ hsv_tune.cpp - o hsv_tune `pkg - config-- cflags-- libs opencv4`
-
+// g++ hsv_tune.cpp -o hsv_tune $(pkg-config --cflags --libs opencv4)
 
 #include <opencv2/opencv.hpp>
 #include <cstdio>
@@ -85,7 +85,7 @@ int main()
     for (int i = 0; i < 20; i++)
     {
         char buf[128];
-        snprintf(buf, sizeof(buf), "/root/vision_ws/frames/frame_%03d.jpg", i);
+        snprintf(buf, sizeof(buf), "/root/vision_ws/src/armor_detector/docs/images/frame_%03d.jpg", i);
         g_files.push_back(buf);
     }
 

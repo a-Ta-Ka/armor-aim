@@ -1,12 +1,5 @@
 <library path="lib/libarmor_detector">
-  <class name="armor_detector/CameraNodelet"
-         type="armor_detector::CameraNodelet"
-         base_class_type="nodelet::Nodelet">
-    <description>Decode compressed image and republish as raw.</description>
-  </class>
-  <class name="armor_detector/DetectorNodelet"
-         type="armor_detector::DetectorNodelet"
-         base_class_type="nodelet::Nodelet">
-    <description>HSV armor detector.</description>
+  <class name="armor_detector/DetectorNodelet" type="armor_detector::DetectorNodelet" base_class_type="nodelet::Nodelet">
+    <description>HSV armor detector</description>
   </class>
 </library>

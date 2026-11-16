@@ -15,6 +15,9 @@ find_package(catkin REQUIRED COMPONENTS
   std_msgs
   image_transport
   nodelet
+  tf2
+  tf2_ros
+  geometry_msgs
 )
 
 find_package(OpenCV REQUIRED)
@@ -111,7 +114,7 @@ find_package(OpenCV REQUIRED)
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES armor_detector
- CATKIN_DEPENDS cv_bridge roscpp rospy sensor_msgs std_msgs image_transport nodelet
+ CATKIN_DEPENDS cv_bridge roscpp rospy sensor_msgs std_msgs image_transport nodelet tf2 tf2_ros geometry_msgs
 #  DEPENDS system_lib
 )
 
@@ -142,18 +145,12 @@ include
 ## The recommended prefix ensures that target names across packages don't collide
 
 add_library(${PROJECT_NAME}
-    src/camera_nodelet.cpp
     src/detector_nodelet.cpp
- )
-
-target_link_libraries(${PROJECT_NAME}
-  ${OpenCV_LIBS}
-  ${catkin_LIBRARIES}
 )
 
-add_dependencies(${PROJECT_NAME}
-  ${${PROJECT_NAME}_EXPORTED_TARGETS}
-  ${catkin_EXPORTED_TARGETS})
+target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS} ${catkin_LIBRARIES})
+
+add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 
 ## Rename C++ executable without prefix
 ## The above recommended prefix causes long target names, the following renames the
