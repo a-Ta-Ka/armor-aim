@@ -2,6 +2,7 @@
 #include <pluginlib/class_list_macros.h>
 #include <algorithm>
 
+
 namespace armor_detector
 {
     namespace // 匿名 namespace，这样做只是单纯想隐藏这些辅助函数，好看一点
@@ -178,12 +179,14 @@ namespace armor_detector
 
         std::string input_topic = "/hk_camera/image_raw";
         std::string debug_topic = "/ft/debug/image";
+        std::string detection_topic = "/ft/detection";
         std::string camera_info_topic = "/hk_camera/camera_info";
         int queue_size = 1;
 
         n.param<std::string>("input_topic", input_topic, input_topic);
         n.param<std::string>("debug_topic", debug_topic, debug_topic);
         n.param<std::string>("camera_info_topic", camera_info_topic,camera_info_topic);
+        n.param<std::string>("detection_topic", detection_topic, detection_topic);
         n.param<int>("queue_size", queue_size, queue_size);
 
         n.param<int>("BH_MIN", BH_MIN_, BH_MIN_);
@@ -224,10 +227,13 @@ namespace armor_detector
         image_transport::TransportHints hints("compressed", ros::TransportHints(), n);
 
         debug_pub_ = n.advertise<sensor_msgs::Image>(debug_topic, 1);
+        detection_pub_ = n.advertise<armor_detector::DetectionFrame>(detection_topic, 1);
         image_sub_ = it.subscribe(input_topic, queue_size, &DetectorNodelet::imageCallback, this, hints);
         info_sub_ = n.subscribe(camera_info_topic, queue_size, &DetectorNodelet::cameraInfoCallback, this);
 
-        ROS_INFO("detector ready: in=%s out=%s camera_info=%s",input_topic.c_str(), debug_topic.c_str(), camera_info_topic.c_str());
+        ROS_INFO("detector ready: in=%s out=%s camera_info=%s detection=%s",
+                 input_topic.c_str(), debug_topic.c_str(),
+                 camera_info_topic.c_str(), detection_topic.c_str());
     }
 
     void DetectorNodelet::cameraInfoCallback(const sensor_msgs::CameraInfoConstPtr &msg)
@@ -245,6 +251,9 @@ namespace armor_detector
     void DetectorNodelet::imageCallback(const sensor_msgs::ImageConstPtr &msg)
     {
         cur_header_ = msg->header;
+        dets_.clear();
+        det_id_ = 0;
+        
         cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
 
         cv::Mat canvas = cv_ptr->image.clone();
@@ -253,6 +262,11 @@ namespace armor_detector
         sensor_msgs::ImagePtr out =
             cv_bridge::CvImage(msg->header, "bgr8", canvas).toImageMsg();
         debug_pub_.publish(out);
+
+        armor_detector::DetectionFrame frame;
+        frame.header = msg->header;
+        frame.detections = dets_;
+        detection_pub_.publish(frame);
     }
 
     void DetectorNodelet::update(cv::Mat &g_img)
@@ -297,7 +311,6 @@ namespace armor_detector
         pairBars(bars, pair_param_, cands);
 
         std::vector<bool> used(bars.size(), false);
-        int armor_id = 0;
         const cv::Scalar center_color = is_red_armor ? cv::Scalar(0, 0, 255)
                                                      : cv::Scalar(0, 255, 0);
 
@@ -331,6 +344,7 @@ namespace armor_detector
             used[c.i] = true; // ← 全部校验通过后才占用灯条
             used[c.j] = true;
 
+            const int armor_id = det_id_++; 
             const std::string tag = std::string(c.large ? "L" : "S") + std::to_string(armor_id);
 
             // 位姿解算
@@ -364,7 +378,7 @@ namespace armor_detector
 
                 geometry_msgs::TransformStamped tf_msg;
                 tf_msg.header = cur_header_; // 图像时间戳
-                tf_msg.child_frame_id = "armor_" + std::to_string(armor_id + (is_red_armor ? 100 : 0));
+                tf_msg.child_frame_id = "armor_" + std::to_string(armor_id);
                 tf_msg.transform.translation.x = tvec.at<double>(0);
                 tf_msg.transform.translation.y = tvec.at<double>(1);
                 tf_msg.transform.translation.z = tvec.at<double>(2);
@@ -373,12 +387,31 @@ namespace armor_detector
                 tf_msg.transform.rotation.z = q.z();
                 tf_msg.transform.rotation.w = q.w();
                 tf_broadcaster_.sendTransform(tf_msg);
+
+                armor_detector::Detection d;
+                d.id = armor_id;
+                d.is_red = is_red_armor;
+                d.is_large_armor = c.large;
+                d.pose.position.x = tvec.at<double>(0);
+                d.pose.position.y = tvec.at<double>(1);
+                d.pose.position.z = tvec.at<double>(2);
+                d.pose.orientation.x = q.x();
+                d.pose.orientation.y = q.y();
+                d.pose.orientation.z = q.z();
+                d.pose.orientation.w = q.w();
+                for (int n = 0; n < 4; ++n)
+                {
+                    d.corners[n].x = quad[n].x;
+                    d.corners[n].y = quad[n].y;
+                    d.corners[n].z = 0.0f;
+                }
+                d.confidence = 1.0f;
+                dets_.push_back(d);
             }
 
             // 绘制
             const cv::Point2f armor_center = (bi.center + bj.center) * 0.5f;
             drawArmor(g_img, quad, armor_center, center_color, pose_ok, rvec, tvec, K_, D_);
-            ++armor_id;
             cv::putText(g_img, tag,
                         cv::Point((int)quad[0].x - 10, (int)quad[0].y - 10),
                         cv::FONT_HERSHEY_SIMPLEX, 0.9, center_color, 2);

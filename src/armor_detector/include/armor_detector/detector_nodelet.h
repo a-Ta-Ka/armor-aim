@@ -17,6 +17,8 @@
 #include <tf2/LinearMath/Quaternion.h>              //变换为超强四元数
 #include <tf2_ros/transform_broadcaster.h>
 
+#include <armor_detector/DetectionFrame.h>
+
 namespace armor_detector
 {
     struct BarFilter
@@ -60,6 +62,8 @@ namespace armor_detector
         int RH2_MIN_ = 170, RH2_MAX_ = 179;
         int S_MIN_ = 80, S_MAX_ = 255, V_MIN_ = 160, V_MAX_ = 255;
 
+        int det_id_ = 0;
+
         // 装甲板
         double wl_large = 4.0, wl_small = 2.4;
         double armor_large_w_ = 0.2256; 
@@ -71,9 +75,11 @@ namespace armor_detector
         cv::Mat K_, D_;
 
         std_msgs::Header cur_header_; // 当前帧图像 header
+        std::vector<armor_detector::Detection> dets_;
         tf2_ros::TransformBroadcaster tf_broadcaster_;
 
         ros::Publisher debug_pub_;
+        ros::Publisher detection_pub_;
         image_transport::Subscriber image_sub_;
         ros::Subscriber info_sub_;
     };
