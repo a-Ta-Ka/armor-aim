@@ -55,6 +55,7 @@
   <depend>tf2</depend>
   <depend>tf2_ros</depend>
   <depend>geometry_msgs</depend>
+  <depend>dynamic_reconfigure</depend>
   <build_depend>cv_bridge</build_depend>
   <build_depend>roscpp</build_depend>
   <build_depend>rospy</build_depend>

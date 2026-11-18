@@ -56,16 +56,20 @@ namespace armor_detector
 
             for (size_t i = 0; i < contours.size(); i++)
             {
-                if (cv::contourArea(contours[i]) <= p.min_area)  //去噪！
+                const double area = cv::contourArea(contours[i]);
+                if (area <= p.min_area) // 去噪！
                     continue;
                 cv::RotatedRect rr = normalizeRect(cv::minAreaRect(contours[i]));
-                const float w = rr.size.width, h = rr.size.height; // 归一化后 w <= h
+                const float w = rr.size.width,
+                            h = rr.size.height;
                 if (h < p.min_height)
                     continue; // 矮
                 if (h / w < p.min_hw || h / w > p.max_hw)
                     continue; // 不细长
                 if (w * h > p.max_area)
                     continue; // 超级大灯
+                if (area / (w * h) < p.min_fill)
+                    continue; // 填充率太低
                 bars.push_back(rr);
             }
         }
@@ -212,6 +216,7 @@ namespace armor_detector
         p_f("ang_diff_max", pair_param_.ang_diff_max);
         p_f("wl_min", pair_param_.wl_min);
         p_f("wl_max", pair_param_.wl_max);
+        p_f("min_fill", bar_filter_.min_fill);
 
         n.param<double>("wl_large", wl_large, wl_large);
         n.param<double>("wl_small", wl_small, wl_small);
@@ -219,6 +224,9 @@ namespace armor_detector
         n.param<double>("armor_large_l", armor_large_l_, armor_large_l_);
         n.param<double>("armor_small_w", armor_small_w_, armor_small_w_);
         n.param<double>("armor_small_l", armor_small_l_, armor_small_l_);
+
+        reconf_server_.reset(new dynamic_reconfigure::Server<Config>(n));
+        reconf_server_->setCallback(boost::bind(&DetectorNodelet::reconfigureCallback, this, _1, _2));
 
         pair_param_.large_ratio = static_cast<float>(std::sqrt(wl_large * wl_small));
         kernel_ = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(3, 3));
@@ -416,6 +424,25 @@ namespace armor_detector
                         cv::Point((int)quad[0].x - 10, (int)quad[0].y - 10),
                         cv::FONT_HERSHEY_SIMPLEX, 0.9, center_color, 2);
         }
+    }
+    void DetectorNodelet::reconfigureCallback(Config &config, uint32_t level)
+    {
+        (void)level;
+        BH_MIN_ = config.BH_MIN;
+        BH_MAX_ = config.BH_MAX;
+        RH_MIN_ = config.RH_MIN;
+        RH_MAX_ = config.RH_MAX;
+        RH2_MIN_ = config.RH2_MIN;
+        RH2_MAX_ = config.RH2_MAX;
+        S_MIN_ = config.S_MIN;
+        S_MAX_ = config.S_MAX;
+        V_MIN_ = config.V_MIN;
+        V_MAX_ = config.V_MAX;
+        bar_filter_.min_area = config.min_area;
+        bar_filter_.min_height = config.min_height;
+        bar_filter_.min_fill = static_cast<float>(config.min_fill);
+        pair_param_.wl_max = static_cast<float>(config.wl_max);
+        pair_param_.ang_diff_max = static_cast<float>(config.ang_diff_max);
     }
 } // namespace armor_detector
 

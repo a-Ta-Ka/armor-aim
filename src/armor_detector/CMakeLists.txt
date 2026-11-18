@@ -19,6 +19,7 @@ find_package(catkin REQUIRED COMPONENTS
   tf2_ros
   geometry_msgs
   message_generation
+  dynamic_reconfigure
 )
 
 find_package(OpenCV REQUIRED)
@@ -83,6 +84,9 @@ generate_messages(
   geometry_msgs
   std_msgs
 )
+generate_dynamic_reconfigure_options(
+  cfg/ArmorDetector.cfg
+)
 
 ################################################
 ## Declare ROS dynamic reconfigure parameters ##
@@ -116,7 +120,7 @@ generate_messages(
 catkin_package(
  INCLUDE_DIRS include
  LIBRARIES armor_detector
- CATKIN_DEPENDS cv_bridge roscpp rospy sensor_msgs std_msgs image_transport nodelet tf2 tf2_ros geometry_msgs message_runtime
+ CATKIN_DEPENDS cv_bridge roscpp rospy sensor_msgs std_msgs image_transport nodelet tf2 tf2_ros geometry_msgs message_runtime dynamic_reconfigure
 #  DEPENDS system_lib
 )
 

@@ -1,5 +1,5 @@
 <launch>
-    <arg name="bag" default="/root/bags/blue_1_with_detection.bag" />
+    <arg name="bag" default="/root/bags/blue_1.bag" />
     <param name="/use_sim_time" value="true" />
 
     <node pkg="rosbag" type="play" name="rosbag_play" output="log"

@@ -18,9 +18,12 @@
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <armor_detector/DetectionFrame.h>
+#include <dynamic_reconfigure/server.h>
+#include <armor_detector/ArmorDetectorConfig.h>
 
 namespace armor_detector
 {
+    typedef armor_detector::ArmorDetectorConfig Config;
     struct BarFilter
     {
         int min_area = 80;         // 轮廓面积下限
@@ -28,6 +31,7 @@ namespace armor_detector
         float min_hw = 2.0f;       // 长宽比下限 h/w
         float max_hw = 30.0f;      // 长宽比上限
         float max_area = 20000.0f; // 面积上限（排除装甲板底色块）
+        float min_fill = 0.1f;     // 填充率
     };
 
     struct PairParam
@@ -50,11 +54,13 @@ namespace armor_detector
         void cameraInfoCallback(const sensor_msgs::CameraInfoConstPtr &msg);
         void detectArmors(const cv::Mat &g_mask, cv::Mat &g_img, bool is_red_armor);
         void update(cv::Mat &g_img);
+        void reconfigureCallback(Config &config, uint32_t level);
         void processColor(const cv::Mat &hsv,
                           const cv::Scalar &lo, const cv::Scalar &hi,
                           cv::Mat &g_img, bool is_red_armor,
                           const cv::Mat &mask_extra = cv::Mat());
 
+        boost::shared_ptr<dynamic_reconfigure::Server<Config>> reconf_server_;
         BarFilter bar_filter_;
         PairParam pair_param_;
 

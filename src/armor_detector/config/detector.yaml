@@ -24,6 +24,7 @@ detector:
   min_hw: 2.0
   max_hw: 30.0
   max_area: 20000
+  min_fill: 0.1
 
   #灯条配对
   dy_ratio: 0.25
