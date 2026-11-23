@@ -26,8 +26,8 @@ namespace armor_detector
     typedef armor_detector::ArmorDetectorConfig Config;
     struct BarFilter
     {
-        int min_area = 80;         // 轮廓面积下限
-        int min_height = 12;       // 灯条高度下限（像素）
+        int min_area = 25;         // 轮廓面积下限
+        int min_height = 6;       // 灯条高度下限（像素）
         float min_hw = 2.0f;       // 长宽比下限 h/w
         float max_hw = 30.0f;      // 长宽比上限
         float max_area = 20000.0f; // 面积上限（排除装甲板底色块）
@@ -37,13 +37,15 @@ namespace armor_detector
     struct PairParam
     {
         float dy_ratio = 0.25f;     // |dy| <= dy_ratio * max_len
-        float len_diff_max = 0.25f; // 长度差 / 较长者
-        float w_diff_max = 0.35f;   // 宽度差 / 平均宽度
+        float h_diff_max = 0.15f;   // |Δh| / 平均灯条高
+        float w_ratio_max = 2.5f;   // 宽灯条/窄灯条 上限
         float ang_diff_max = 8.0f;  // 角度差（度）
         float wl_min = 1.2f;        // 中心距 / 平均灯条长  下限
         float wl_max = 6.0f;        // 中心距 / 平均灯条长  上限
         float large_ratio = 2.9f;  // >= 该值判为大装甲板
+        float endpoint_dy_ratio = 0.35f; // 上下端点允许的纵向差 / 平均灯条长度
     };
+
     class DetectorNodelet : public nodelet::Nodelet
     {
     public:
@@ -67,11 +69,13 @@ namespace armor_detector
         int BH_MIN_ = 80, BH_MAX_ = 120, RH_MIN_ = 0, RH_MAX_ = 40;
         int RH2_MIN_ = 170, RH2_MAX_ = 179;
         int S_MIN_ = 80, S_MAX_ = 255, V_MIN_ = 160, V_MAX_ = 255;
-
         int det_id_ = 0;
 
+        uint32_t camera_width_ = 0;
+        uint32_t camera_height_ = 0;
+
         // 装甲板
-        double wl_large = 4.0, wl_small = 2.4;
+        double wl_large_ = 4.0, wl_small_ = 2.4;
         double armor_large_w_ = 0.2256; 
         double armor_large_l_ = 0.056;   
         double armor_small_w_ = 0.135; 
@@ -80,6 +84,7 @@ namespace armor_detector
         cv::Mat kernel_;
         cv::Mat K_, D_;
 
+        std::string camera_frame_;
         std_msgs::Header cur_header_; // 当前帧图像 header
         std::vector<armor_detector::Detection> dets_;
         tf2_ros::TransformBroadcaster tf_broadcaster_;

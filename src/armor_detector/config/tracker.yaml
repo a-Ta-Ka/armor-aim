@@ -1,0 +1,17 @@
+tracker:
+  detection_topic: /ft/detection
+  track_topic:     /ft/track
+  marker_topic:    /ft/debug/marker
+  queue_size:      2
+
+  predict_T:      0.1     # 提前量 s，任务书要求可配
+  max_match_dist: 0.5     # 关联门限 m
+  lost_timeout:   0.5     # 连续丢检多久删轨迹 s（任务书：0.5）
+  dt_max:         0.5     # 帧间隔超此值视为断流
+
+  # 卡尔曼参数
+  q_pos:        0.0001  # 位置过程噪声 m^2
+  q_vel:        0.003    # 速度过程噪声 (m/s)^2
+  r_pos:        0.001   # 观测噪声 m^2（经验参数，非实测标定；调参对照见工作区记录）
+  init_pos_var: 1.0     # 初始位置方差 m^2
+  init_vel_var: 10.0    # 初始速度方差 (m/s)^2

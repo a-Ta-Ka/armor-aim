@@ -2,14 +2,15 @@ detector:
   input_topic:       /hk_camera/image_raw
   debug_topic:       /ft/debug/image
   camera_info_topic: /hk_camera/camera_info
+  detection_topic: /ft/detection
   queue_size:        2
 
   # HSV 阈值
   BH_MIN: 80
   BH_MAX: 120
 
-  RH_MIN: 0
-  RH_MAX: 40
+  RH_MIN:  0
+  RH_MAX:  40
   RH2_MIN: 170
   RH2_MAX: 179
 
@@ -19,20 +20,21 @@ detector:
   V_MAX: 255
 
   #灯条筛选
-  min_area: 60
-  min_height: 12
-  min_hw: 2.0
-  max_hw: 30.0
-  max_area: 20000
-  min_fill: 0.1
+  min_area:   25
+  min_height: 6
+  min_hw:     2.0
+  max_hw:     30.0
+  max_area:   20000
+  min_fill:   0.1
 
   #灯条配对
-  dy_ratio: 0.25
-  len_diff_max: 0.25
-  w_diff_max: 0.35
+  dy_ratio:     0.25
+  h_diff_max:   0.15    
+  w_ratio_max:  2.5    
   ang_diff_max: 8.0
-  wl_min: 1.2
-  wl_max: 6.0
+  wl_min:       1.2
+  wl_max:       6.0
+  endpoint_dy_ratio: 0.35  
 
   #大/小装甲：灯条中心距 / 灯条长
   wl_large: 4.0

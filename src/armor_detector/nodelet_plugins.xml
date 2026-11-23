@@ -2,4 +2,7 @@
   <class name="armor_detector/DetectorNodelet" type="armor_detector::DetectorNodelet" base_class_type="nodelet::Nodelet">
     <description>HSV armor detector</description>
   </class>
+    <class name="armor_detector/TrackerNodelet" type="armor_detector::TrackerNodelet" base_class_type="nodelet::Nodelet">
+    <description>Constant velocity armor tracker</description>
+  </class>
 </library>
