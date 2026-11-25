@@ -47,8 +47,17 @@ detector:
   armor_small_l: 0.056   
 
   #神经网络了
-  detection_mode: tradition
+  detection_mode: tv
   nn_model_path: /root/bags/nn_model/armor.onnx
   nn_color_threshold: 0.5
   nn_number_threshold: 0.5
   nn_nms_threshold: 0.4
+
+  #地板倒影抑制
+  mirror_enabled: true
+  mirror_dx_ratio: 1.00
+  mirror_w_ratio: 4.00
+  mirror_x_tol_ratio: 1.00
+  mirror_min_gap_ratio: 0.30
+  mirror_max_gap_ratio: 20.00
+  mirror_max_height_ratio: 4.00

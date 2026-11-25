@@ -9,97 +9,74 @@
 #include <opencv2/opencv.hpp>
 #include <string>
 #include <vector>
-#include <cmath>
 #include <cstddef>
 
-#include <std_msgs/Header.h>                        //ROS消息通用头部
+#include <std_msgs/Header.h>
 #include <geometry_msgs/TransformStamped.h>
-#include <tf2/LinearMath/Matrix3x3.h>               //将ros33矩阵变为tf33矩阵
-#include <tf2/LinearMath/Quaternion.h>              //变换为超强四元数
+#include <tf2/LinearMath/Quaternion.h>
 #include <tf2_ros/transform_broadcaster.h>
 
 #include <armor_detector/DetectionFrame.h>
 #include <dynamic_reconfigure/server.h>
 #include <armor_detector/ArmorDetectorConfig.h>
 
-#include "armor_detector/nn_detector.h" 
+#include "armor_detector/armor_types.h"
+#include "armor_detector/tv_detector.h"
+#include "armor_detector/nn_detector.h"
 
 namespace armor_detector
 {
     typedef armor_detector::ArmorDetectorConfig Config;
-    struct BarFilter
-    {
-        int min_area = 25;         // 轮廓面积下限
-        int min_height = 6;       // 灯条高度下限（像素）
-        float min_hw = 2.0f;       // 长宽比下限 h/w
-        float max_hw = 30.0f;      // 长宽比上限
-        float max_area = 20000.0f; // 面积上限（排除装甲板底色块）
-        float min_fill = 0.1f;     // 填充率
-    };
-
-    struct PairParam
-    {
-        float dy_ratio = 0.25f;     // |dy| <= dy_ratio * max_len
-        float h_diff_max = 0.15f;   // |Δh| / 平均灯条高
-        float w_ratio_max = 2.5f;   // 宽灯条/窄灯条 上限
-        float ang_diff_max = 8.0f;  // 角度差（度）
-        float wl_min = 1.2f;        // 中心距 / 平均灯条长  下限
-        float wl_max = 6.0f;        // 中心距 / 平均灯条长  上限
-        float large_ratio = 2.9f;  // >= 该值判为大装甲板
-        float endpoint_dy_ratio = 0.35f; // 上下端点允许的纵向差 / 平均灯条长度
-    };
 
     class DetectorNodelet : public nodelet::Nodelet
     {
     public:
         virtual void onInit();
-
     private:
-        void imageCallback(const sensor_msgs::ImageConstPtr &msg);
-        void cameraInfoCallback(const sensor_msgs::CameraInfoConstPtr &msg);
-        void detectArmors(const cv::Mat &g_mask, cv::Mat &g_img, bool is_red_armor);
-        void update(cv::Mat &g_img);
-        void reconfigureCallback(Config &config, uint32_t level);
-        void processColor(const cv::Mat &hsv,
-                          const cv::Scalar &lo, const cv::Scalar &hi,
-                          cv::Mat &g_img, bool is_red_armor,
-                          const cv::Mat &mask_extra = cv::Mat());
-        void detectNnArmors(const cv::Mat &image, cv::Mat &canvas);
-        bool appendArmor(const cv::Point2f quad[4],
-                         bool is_red, bool is_large,
-                         int number, float confidence,
-                         cv::Mat &canvas);
+        void loadParams();                // 读 YAML、建动态参数服务、按需加载模型
+        void setupInterfaces();           // 订阅与发布
+
+        // 回调
+        void onCameraInfo(const sensor_msgs::CameraInfoConstPtr &msg);
+        void onImage(const sensor_msgs::ImageConstPtr &msg);
+        void onReconfigure(Config &config, uint32_t level);
+
+        // 前端 → 统一后处理
+        void findWithTv(const cv::Mat &image, cv::Mat &canvas);
+        void findWithNn(const cv::Mat &image, cv::Mat &canvas);
+        bool appendArmor(const Armor &armor, cv::Mat &canvas);
+
+        // appendArmor 内部四件事
+        bool estimatePose(const Armor &armor, cv::Mat &rvec, cv::Mat &tvec) const;
+        void makeDetection(const Armor &armor, int id,
+                           const cv::Mat &tvec, const tf2::Quaternion &q);
+        void broadcastTf(int id, const cv::Mat &tvec, const tf2::Quaternion &q);
 
         boost::shared_ptr<dynamic_reconfigure::Server<Config>> reconf_server_;
-        BarFilter bar_filter_;
-        PairParam pair_param_;
 
-        int BH_MIN_ = 80, BH_MAX_ = 120, RH_MIN_ = 0, RH_MAX_ = 40;
-        int RH2_MIN_ = 170, RH2_MAX_ = 179;
-        int S_MIN_ = 80, S_MAX_ = 255, V_MIN_ = 160, V_MAX_ = 255;
+        TvDetector tv_detector_;
+        NnDetector nn_detector_;
+        TvDetector::Params tv_params_; 
+
         int det_id_ = 0;
 
-        uint32_t camera_width_ = 0;
-        uint32_t camera_height_ = 0;
-
-        // 装甲板
+        // 装甲板物理尺寸（米）
         double wl_large_ = 4.0, wl_small_ = 2.4;
-        double armor_large_w_ = 0.2256; 
-        double armor_large_l_ = 0.056;   
-        double armor_small_w_ = 0.135; 
-        double armor_small_l_ = 0.056;  
+        double armor_large_w_ = 0.2256;
+        double armor_large_l_ = 0.056;
+        double armor_small_w_ = 0.135;
+        double armor_small_l_ = 0.056;
 
+        // 神经网络
         float nn_color_threshold_ = 0.5f;
         float nn_number_threshold_ = 0.5f;
         float nn_nms_threshold_ = 0.4f;
-        std::string detection_mode_;
+        std::string detection_mode_ = "tv";
         std::string nn_model_path_;
-        NnDetector nn_detector_;
         std::size_t nn_frames_ = 0;
         std::size_t nn_timed_frames_ = 0;
         double nn_total_ms_ = 0.0;
 
-        cv::Mat kernel_;
         cv::Mat K_, D_;
 
         std::string camera_frame_;
@@ -112,4 +89,4 @@ namespace armor_detector
         image_transport::Subscriber image_sub_;
         ros::Subscriber info_sub_;
     };
-}
+} // namespace armor_detector

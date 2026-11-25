@@ -55,7 +55,9 @@ include
 add_library(${PROJECT_NAME}
     src/detector.cpp
     src/tracker.cpp
+    src/tv_detector.cpp
     src/nn_detector.cpp
+    src/geometry.cpp
 )
 
 target_link_libraries(${PROJECT_NAME}

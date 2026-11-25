@@ -4,45 +4,51 @@
 #include <openvino/openvino.hpp>
 #include <string>
 #include <vector>
-#include <array>
 
-namespace armor_detector {
+#include "armor_detector/armor_types.h"
 
-// 神经网络识别出的单块装甲板信息
-struct NnArmor {
-    std::array<cv::Point2f, 4> corners; // 左上、右上、右下、左下
-    int color;                          // 0 蓝，1 红
-    int number;                         // 模型编号类别 (0~8)
-    float confidence;                   // 用于排序的综合分数
-};
+namespace armor_detector
+{
+    class NnDetector
+    {
+    public:
+        void init(const std::string &model_path,
+                  float color_threshold,
+                  float number_threshold,
+                  float nms_threshold);
+        void setLargeRatio(float ratio) { large_ratio_ = ratio; }//大小判定
+        std::vector<Armor> find(const cv::Mat &image);
 
-class NnDetector {
-public:
-    NnDetector() = default;
-    ~NnDetector() = default;
+    private:
+        struct Candidate
+        {
+            Armor armor;
+            cv::Rect box;
+            float score = 0.f;
+        }; //候选
 
-    // 初始化：加载模型，配置参数
-    void init(const std::string &model_path,
-              float color_threshold,
-              float number_threshold,
-              float nms_threshold);
+        //预处理
+        void preprocess(const cv::Mat &image, cv::Mat &rgb_float,
+                        float &scale_x, float &scale_y, int &pad_x, int &pad_y) const;
+        //一次推理
+        void infer(const cv::Mat &rgb_float);
+        //后处理
+        void decode(const float *out, float scale_x, float scale_y,
+                    int pad_x, int pad_y, std::vector<Candidate> &cands) const;
+        //去重
+        void nms(std::vector<Candidate> &cands, std::vector<Armor> &out) const;
+        //处理集
+        cv::Mat letterbox(const cv::Mat &src, float &scale_x, float &scale_y,
+                          int &pad_x, int &pad_y) const;
 
-    // 识别接口：输入原图，输出装甲板列表
-    std::vector<NnArmor> detect(const cv::Mat &image);
+        ov::Core core_;
+        ov::CompiledModel compiled_model_;
+        ov::InferRequest infer_request_;
 
-private:
-    // OpenVINO对象
-    ov::Core core_;
-    ov::CompiledModel compiled_model_;
-    ov::InferRequest infer_request_;
-
-    // 过滤阈值
-    float color_threshold_ = 0.5f;
-    float number_threshold_ = 0.5f;
-    float nms_threshold_ = 0.4f;
-
-    // 预处理函数
-    cv::Mat letterbox(const cv::Mat &src, float &scale_x, float &scale_y, int &pad_x, int &pad_y);
-};
+        float color_threshold_ = 0.5f;
+        float number_threshold_ = 0.5f;
+        float nms_threshold_ = 0.4f;
+        float large_ratio_ = 2.9f;
+    };
 
 } // namespace armor_detector

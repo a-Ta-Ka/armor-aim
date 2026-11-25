@@ -1,7 +1,7 @@
 #include "armor_detector/tracker.h"
 #include <pluginlib/class_list_macros.h>
-#include <algorithm>                       //操作容器的算法库
-#include <limits>                          //得到一些最大小值
+#include <algorithm>
+#include <limits>
 
 namespace armor_detector
 {
@@ -11,9 +11,9 @@ namespace armor_detector
         n.param<int>("queue_size", queue_size_, queue_size_);
         n.param<std::string>("detection_topic", detection_topic_, detection_topic_);
         n.param<std::string>("track_topic", track_topic_, track_topic_);
-        n.param<double>("predict_T", predict_t_, predict_t_);
         n.param<std::string>("marker_topic", marker_topic_, marker_topic_);
 
+        n.param<double>("predict_T", predict_t_, predict_t_);
         n.param<double>("max_match_dist", max_match_dist_, max_match_dist_);
         n.param<double>("lost_timeout", lost_timeout_, lost_timeout_);
         n.param<double>("dt_max", dt_max_, dt_max_);
@@ -23,12 +23,12 @@ namespace armor_detector
         n.param<double>("init_pos_var", init_pos_var_, init_pos_var_);
         n.param<double>("init_vel_var", init_vel_var_, init_vel_var_);
 
-        det_sub_ = n.subscribe(detection_topic_, queue_size_,&TrackerNodelet::detectionCallback, this);
+        det_sub_ = n.subscribe(detection_topic_, queue_size_, &TrackerNodelet::onDetection, this);
         track_pub_ = n.advertise<armor_detector::TrackTarget>(track_topic_, 1);
         marker_pub_ = n.advertise<visualization_msgs::Marker>(marker_topic_, 1);
     }
 
-    void TrackerNodelet::detectionCallback(const armor_detector::DetectionFrame::ConstPtr &msg)
+    void TrackerNodelet::onDetection(const armor_detector::DetectionFrame::ConstPtr &msg)
     {
         const double t = msg->header.stamp.toSec();
         const double dt = (last_stamp_ > 0.0) ? (t - last_stamp_) : -1.0;
@@ -43,55 +43,73 @@ namespace armor_detector
                 return;
             }
             const auto &p = msg->detections.front().pose.position;
-            resetKalman(cv::Point3d(p.x, p.y, p.z));
+            resetFilter(cv::Point3d(p.x, p.y, p.z));
             has_track_ = true;
             ++track_id_;
             last_hit_stamp_ = t;
 
             ROS_INFO("tracker: new track id=%d (dt=%.3f)", track_id_, dt);
-
-            publishTrack(msg->header, true); 
+            publishTrack(msg->header, true);
             return;
-        }
-
+        }//错时
         if (has_track_ && last_hit_stamp_ >= 0.0 && (t - last_hit_stamp_) > lost_timeout_)
         {
             ROS_INFO("tracker: track id=%d lost", track_id_);
             has_track_ = false;
             last_hit_stamp_ = -1.0;
-        }
-
+        }//超时
         if (!has_track_)
         {
-            if (msg->detections.empty())
-                return;
-            // 首帧没有预测位置可比，选离相机最近的一块（近距离像素多、更可靠）
+            if (msg->detections.empty()) return;
             const auto it = std::min_element(
                 msg->detections.begin(), msg->detections.end(),
                 [](const armor_detector::Detection &a, const armor_detector::Detection &b)
                 { return a.pose.position.z < b.pose.position.z; });
 
             const auto &p = it->pose.position;
-            resetKalman(cv::Point3d(p.x, p.y, p.z));
+            resetFilter(cv::Point3d(p.x, p.y, p.z));
             has_track_ = true;
             ++track_id_;
             last_hit_stamp_ = t;
             ROS_INFO("tracker: new track id=%d", track_id_);
             publishTrack(msg->header, true);
             return;
-        }
+        }//建轨
 
-        // 1) 预测
+        //预测
         kf_.transitionMatrix.at<double>(0, 3) = dt;
         kf_.transitionMatrix.at<double>(1, 4) = dt;
         kf_.transitionMatrix.at<double>(2, 5) = dt;
-        cv::Mat pred = kf_.predict();
+        const cv::Mat pred = kf_.predict();
 
-        // 2) 关联：在所有检测里找离预测最近的一个
+        //关联
+        double best_err = 0.0;
+        const armor_detector::Detection *best =
+            associate(pred, msg->detections, best_err);
+
+        //门限
+        const bool hit = (best != nullptr);
+        if (hit)
+        {
+            const cv::Mat meas = (cv::Mat_<double>(3, 1) << best->pose.position.x,
+                                  best->pose.position.y,
+                                  best->pose.position.z);
+            kf_.correct(meas);
+            last_hit_stamp_ = t;
+        }
+        else if (!msg->detections.empty()) ROS_WARN_THROTTLE(1.0, "tracker:nearest%.2f m,ignore",best_err);
+        publishTrack(msg->header, hit);
+    }
+
+    const armor_detector::Detection *TrackerNodelet::associate(
+        const cv::Mat &pred,
+        const std::vector<armor_detector::Detection> &dets,
+        double &best_err) const
+    {
         const armor_detector::Detection *best = nullptr;
-        double best_err = std::numeric_limits<double>::max();
+        best_err = std::numeric_limits<double>::max();
 
-        for (const auto &d : msg->detections)
+        for (const auto &d : dets)
         {
             const double err = cv::norm(
                 cv::Point3d(d.pose.position.x, d.pose.position.y, d.pose.position.z) -
@@ -103,28 +121,11 @@ namespace armor_detector
             }
         }
 
-        // 3) 修正：只有过了门限才算命中
-        bool hit = false;
         if (best && best_err < max_match_dist_)
-        {
-            cv::Mat meas = (cv::Mat_<double>(3, 1) << best->pose.position.x,
-                            best->pose.position.y,
-                            best->pose.position.z);
-            kf_.correct(meas);
-            hit = true;
-        }
-        else if (best)
-        {
-            ROS_WARN_THROTTLE(1.0, "tracker: nearest %.2f m, ignore", best_err);
-        }
-
-        // 4) 丢失计时：未命中的连续时长（空帧和被门限拒绝的帧都算）
-        if (hit)
-            last_hit_stamp_ = t;
-
-        publishTrack(msg->header, hit);
-    }
-    void TrackerNodelet::resetKalman(const cv::Point3d &p)
+            return best;
+        return nullptr;
+    }//贪心匹配
+    void TrackerNodelet::resetFilter(const cv::Point3d &p)
     {
         kf_.init(6, 3, 0, CV_64F);
 
@@ -157,7 +158,8 @@ namespace armor_detector
 
         // R：观测噪声，三个方向同方差
         kf_.measurementNoiseCov = cv::Mat::eye(3, 3, CV_64F) * r_pos_;
-    }
+    }//建轨初始化
+
     void TrackerNodelet::publishTrack(const std_msgs::Header &header, bool tracking)
     {
         armor_detector::TrackTarget out;
@@ -173,35 +175,35 @@ namespace armor_detector
         out.velocity.y = s.at<double>(4);
         out.velocity.z = s.at<double>(5);
 
-        // 提前量：当前位置 + 速度 × T
         out.position_predict.x = out.position.x + out.velocity.x * predict_t_;
         out.position_predict.y = out.position.y + out.velocity.y * predict_t_;
         out.position_predict.z = out.position.z + out.velocity.z * predict_t_;
 
         track_pub_.publish(out);
         publishMarker(header, tracking, out.position_predict);
-    }
-    void TrackerNodelet::publishMarker(const std_msgs::Header &header, bool tracking, const geometry_msgs::Point &p)
+    }//发送追踪坐标
+    void TrackerNodelet::publishMarker(const std_msgs::Header &header, bool tracking,
+                                       const geometry_msgs::Point &p)
     {
         visualization_msgs::Marker m;
-        m.header = header; // frame_id 用相机系，和 TF 一致
+        m.header = header;
         m.ns = "track";
-        m.id = 0; // 只有一个目标，固定 id 0
+        m.id = 0;
         m.type = visualization_msgs::Marker::SPHERE;
         m.action = visualization_msgs::Marker::ADD;
 
-        m.pose.position = p;   // 见下面的说明
-        m.pose.orientation.w = 1.0;              // 球不需要旋转，但必须给合法四元数
-        m.scale.x = m.scale.y = m.scale.z = 0.1; // 直径 10 cm
+        m.pose.position = p;
+        m.pose.orientation.w = 1.0; 
+        m.scale.x = m.scale.y = m.scale.z = 0.1; 
 
         m.color.r = tracking ? 0.0f : 1.0f;
         m.color.g = tracking ? 1.0f : 0.8f;
         m.color.b = 0.0f;
         m.color.a = 0.8f;
 
-        m.lifetime = ros::Duration(0.3); // 节点挂掉后 0.3 s 自动消失
+        m.lifetime = ros::Duration(0.3);
         marker_pub_.publish(m);
-    }
+    }//rviz画小球
 }
 
 PLUGINLIB_EXPORT_CLASS(armor_detector::TrackerNodelet, nodelet::Nodelet)

@@ -1,7 +1,7 @@
 <launch>
       <arg name="bag" default="/root/bags/blue_1.bag" />
       <arg name="fixed_frame" default="camera_optical_frame" />
-      <arg name="detection_mode" default="tradition" />
+      <arg name="detection_mode" default="tv" />
       <arg name="nn_model_path" default="/root/bags/nn_model/armor.onnx" />
 
       <param name="/use_sim_time" value="true" />
@@ -14,7 +14,7 @@
       <rosparam file="$(find armor_detector)/config/tracker.yaml" command="load"/>
 
       <node pkg="nodelet" type="nodelet" name="armor_manager" args="manager" output="screen">
-      <param name="num_worker_threads" value="1"/>   <!-- 回调串行执行 -->
+      <param name="num_worker_threads" value="1"/>
       </node>
 
       <node pkg="nodelet" type="nodelet" name="detector"
