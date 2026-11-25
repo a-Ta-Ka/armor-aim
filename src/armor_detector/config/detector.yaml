@@ -3,7 +3,7 @@ detector:
   debug_topic:       /ft/debug/image
   camera_info_topic: /hk_camera/camera_info
   detection_topic: /ft/detection
-  queue_size:        2
+  queue_size: 2
 
   # HSV 阈值
   BH_MIN: 80
@@ -45,3 +45,10 @@ detector:
   armor_large_l: 0.056  
   armor_small_w: 0.135   
   armor_small_l: 0.056   
+
+  #神经网络了
+  detection_mode: tradition
+  nn_model_path: /root/bags/nn_model/armor.onnx
+  nn_color_threshold: 0.5
+  nn_number_threshold: 0.5
+  nn_nms_threshold: 0.4

@@ -10,6 +10,7 @@
 #include <string>
 #include <vector>
 #include <cmath>
+#include <cstddef>
 
 #include <std_msgs/Header.h>                        //ROS消息通用头部
 #include <geometry_msgs/TransformStamped.h>
@@ -20,6 +21,8 @@
 #include <armor_detector/DetectionFrame.h>
 #include <dynamic_reconfigure/server.h>
 #include <armor_detector/ArmorDetectorConfig.h>
+
+#include "armor_detector/nn_detector.h" 
 
 namespace armor_detector
 {
@@ -61,6 +64,11 @@ namespace armor_detector
                           const cv::Scalar &lo, const cv::Scalar &hi,
                           cv::Mat &g_img, bool is_red_armor,
                           const cv::Mat &mask_extra = cv::Mat());
+        void detectNnArmors(const cv::Mat &image, cv::Mat &canvas);
+        bool appendArmor(const cv::Point2f quad[4],
+                         bool is_red, bool is_large,
+                         int number, float confidence,
+                         cv::Mat &canvas);
 
         boost::shared_ptr<dynamic_reconfigure::Server<Config>> reconf_server_;
         BarFilter bar_filter_;
@@ -80,6 +88,16 @@ namespace armor_detector
         double armor_large_l_ = 0.056;   
         double armor_small_w_ = 0.135; 
         double armor_small_l_ = 0.056;  
+
+        float nn_color_threshold_ = 0.5f;
+        float nn_number_threshold_ = 0.5f;
+        float nn_nms_threshold_ = 0.4f;
+        std::string detection_mode_;
+        std::string nn_model_path_;
+        NnDetector nn_detector_;
+        std::size_t nn_frames_ = 0;
+        std::size_t nn_timed_frames_ = 0;
+        double nn_total_ms_ = 0.0;
 
         cv::Mat kernel_;
         cv::Mat K_, D_;

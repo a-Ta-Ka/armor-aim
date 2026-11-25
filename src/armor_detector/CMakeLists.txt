@@ -1,6 +1,9 @@
 cmake_minimum_required(VERSION 3.0.2)
 project(armor_detector)
 
+set(CMAKE_CXX_STANDARD 14)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
 find_package(catkin REQUIRED COMPONENTS
   cv_bridge
   roscpp
@@ -18,6 +21,7 @@ find_package(catkin REQUIRED COMPONENTS
 )
 
 find_package(OpenCV REQUIRED)
+find_package(OpenVINO REQUIRED COMPONENTS Runtime)
 
 add_message_files(
   FILES
@@ -51,9 +55,14 @@ include
 add_library(${PROJECT_NAME}
     src/detector.cpp
     src/tracker.cpp
+    src/nn_detector.cpp
 )
 
-target_link_libraries(${PROJECT_NAME} ${OpenCV_LIBS} ${catkin_LIBRARIES})
+target_link_libraries(${PROJECT_NAME}
+    ${OpenCV_LIBS}
+    ${catkin_LIBRARIES}
+    openvino::runtime
+)
 
 add_dependencies(${PROJECT_NAME} ${${PROJECT_NAME}_EXPORTED_TARGETS} ${catkin_EXPORTED_TARGETS})
 

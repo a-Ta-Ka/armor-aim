@@ -1,6 +1,8 @@
 #include "armor_detector/detector.h"
 #include <pluginlib/class_list_macros.h>
 #include <algorithm>
+#include <stdexcept>
+#include <chrono>
 
 
 namespace armor_detector
@@ -246,6 +248,49 @@ namespace armor_detector
         n.param<std::string>("detection_topic", detection_topic, detection_topic);
         n.param<int>("queue_size", queue_size, queue_size);
 
+        n.param<std::string>("detection_mode", detection_mode_, "tradition");
+        n.param<std::string>("nn_model_path", nn_model_path_, "");
+        p_f("nn_color_threshold", nn_color_threshold_);
+        p_f("nn_number_threshold", nn_number_threshold_);
+        p_f("nn_nms_threshold", nn_nms_threshold_);
+
+        for (const float threshold : {nn_color_threshold_, nn_number_threshold_, nn_nms_threshold_})
+        {
+            if (!std::isfinite(threshold) || threshold < 0.0f || threshold > 1.0f)
+                throw std::invalid_argument("NN thresholds must be finite and in [0, 1].");
+        }
+
+        // 初始化
+        if (detection_mode_ == "tradition")
+        {
+            ROS_INFO("Detector initialized in TRADITION mode.");
+        }
+        else if (detection_mode_ == "nn")
+        {
+            if (nn_model_path_.empty())
+            {
+                ROS_ERROR("detection_mode is 'nn', but 'nn_model_path' is empty!");
+                throw std::runtime_error("NN model path is empty.");
+            }
+            try
+            {
+                ROS_INFO("Loading neural network model from: %s", nn_model_path_.c_str());
+                nn_detector_.init(nn_model_path_, nn_color_threshold_, nn_number_threshold_, nn_nms_threshold_);
+                ROS_INFO("Neural network model loaded successfully.");
+            }
+            catch (const std::exception &e)
+            {
+                NODELET_ERROR("Failed to load neural network model: %s", e.what());
+                throw;
+            }
+        }
+        else
+        {
+            ROS_ERROR("Unknown detection_mode: '%s'. Valid options are 'tradition' or 'nn'.", detection_mode_.c_str());
+            throw std::runtime_error("Unknown detection_mode: " + detection_mode_);
+        }
+
+
         n.param<int>("BH_MIN", BH_MIN_, BH_MIN_);
         n.param<int>("BH_MAX", BH_MAX_, BH_MAX_);
         n.param<int>("RH_MIN", RH_MIN_, RH_MIN_);
@@ -288,8 +333,8 @@ namespace armor_detector
         image_transport::ImageTransport it(n);
         image_transport::TransportHints hints("compressed", ros::TransportHints(), n);
 
-        debug_pub_ = n.advertise<sensor_msgs::Image>(debug_topic, 1);
-        detection_pub_ = n.advertise<armor_detector::DetectionFrame>(detection_topic, 1);
+        debug_pub_ = n.advertise<sensor_msgs::Image>(debug_topic, queue_size);
+        detection_pub_ = n.advertise<armor_detector::DetectionFrame>(detection_topic, queue_size);
         image_sub_ = it.subscribe(input_topic, queue_size, &DetectorNodelet::imageCallback, this, hints);
         info_sub_ = n.subscribe(camera_info_topic, queue_size, &DetectorNodelet::cameraInfoCallback, this);
 
@@ -320,10 +365,35 @@ namespace armor_detector
         dets_.clear();
         det_id_ = 0;
         
-        cv_bridge::CvImageConstPtr cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
+        cv_bridge::CvImageConstPtr cv_ptr;
+        try
+        {
+            cv_ptr = cv_bridge::toCvShare(msg, sensor_msgs::image_encodings::BGR8);
+        }
+        catch (const cv_bridge::Exception &e)
+        {
+            NODELET_ERROR_THROTTLE(1.0, "Image conversion failed: %s", e.what());
+            armor_detector::DetectionFrame frame;
+            frame.header = cur_header_;
+            detection_pub_.publish(frame);
+            return;
+        }
 
         cv::Mat canvas = cv_ptr->image.clone();
-        update(canvas);
+        try
+        {
+            if (detection_mode_ == "tradition")
+                update(canvas);
+            else
+                detectNnArmors(cv_ptr->image, canvas);
+        }
+        catch (const std::exception &e)
+        {
+            NODELET_ERROR_THROTTLE(1.0, "Detection failed in %s mode: %s",
+                                   detection_mode_.c_str(), e.what());
+            dets_.clear();
+            canvas = cv_ptr->image.clone();
+        }
 
         sensor_msgs::ImagePtr out =cv_bridge::CvImage(cur_header_, "bgr8", canvas).toImageMsg();
         debug_pub_.publish(out);
@@ -376,8 +446,6 @@ namespace armor_detector
         pairBars(bars, pair_param_, cands);
 
         std::vector<bool> used(bars.size(), false);
-        const cv::Scalar center_color = is_red_armor ? cv::Scalar(0, 0, 255)
-                                                     : cv::Scalar(0, 255, 0);
 
         for (size_t k = 0; k < cands.size(); k++)
         {
@@ -407,81 +475,138 @@ namespace armor_detector
             if (std::abs(left_bottom.y - right_bottom.y) > max_endpoint_dy)
                 continue;
 
-            const int armor_id = det_id_++; 
-            const std::string tag = std::string(c.large ? "L" : "S") + std::to_string(armor_id);
-
-            // 位姿解算
             const cv::Point2f quad[4] = {left_top, right_top, right_bottom, left_bottom};
-            cv::Mat rvec, tvec;
-            bool pose_ok = false;
-            if (!K_.empty())
+            if (appendArmor(quad, is_red_armor, c.large, -1, 1.0f, g_img))
             {
-                const double armor_w = c.large ? armor_large_w_ : armor_small_w_;
-                const double armor_l = c.large ? armor_large_l_ : armor_small_l_;
-                pose_ok = solveArmorPose(quad, armor_w, armor_l, K_, D_, rvec, tvec);
-            }
-
-            if (pose_ok)
-            {
-                const double rot_deg = std::sqrt(rvec.at<double>(0) * rvec.at<double>(0) +
-                                                 rvec.at<double>(1) * rvec.at<double>(1) +
-                                                 rvec.at<double>(2) * rvec.at<double>(2)) *
-                                       57.3;
-                ROS_DEBUG_THROTTLE(0.5, "[%s] t=(%.2f,%.2f,%.2f) |r|=%.1fdeg",
-                                   tag.c_str(), tvec.at<double>(0), tvec.at<double>(1),
-                                   tvec.at<double>(2), rot_deg);
-
-                cv::Mat R;
-                cv::Rodrigues(rvec, R);
-                tf2::Matrix3x3 m(R.at<double>(0, 0), R.at<double>(0, 1), R.at<double>(0, 2),
-                                 R.at<double>(1, 0), R.at<double>(1, 1), R.at<double>(1, 2),
-                                 R.at<double>(2, 0), R.at<double>(2, 1), R.at<double>(2, 2));
-                tf2::Quaternion q;
-                m.getRotation(q);
-
-                geometry_msgs::TransformStamped tf_msg;
-                tf_msg.header = cur_header_; // 图像时间戳
-                tf_msg.child_frame_id = "armor_" + std::to_string(armor_id);
-                tf_msg.transform.translation.x = tvec.at<double>(0);
-                tf_msg.transform.translation.y = tvec.at<double>(1);
-                tf_msg.transform.translation.z = tvec.at<double>(2);
-                tf_msg.transform.rotation.x = q.x();
-                tf_msg.transform.rotation.y = q.y();
-                tf_msg.transform.rotation.z = q.z();
-                tf_msg.transform.rotation.w = q.w();
-                tf_broadcaster_.sendTransform(tf_msg);
-
-                armor_detector::Detection d;
-                d.id = armor_id;
-                d.is_red = is_red_armor;
-                d.is_large_armor = c.large;
-                d.pose.position.x = tvec.at<double>(0);
-                d.pose.position.y = tvec.at<double>(1);
-                d.pose.position.z = tvec.at<double>(2);
-                d.pose.orientation.x = q.x();
-                d.pose.orientation.y = q.y();
-                d.pose.orientation.z = q.z();
-                d.pose.orientation.w = q.w();
-                for (int n = 0; n < 4; ++n)
-                {
-                    d.corners[n].x = quad[n].x;
-                    d.corners[n].y = quad[n].y;
-                    d.corners[n].z = 0.0f;
-                }
-                d.confidence = 1.0f;
                 used[c.i] = true;
                 used[c.j] = true;
-                dets_.push_back(d);
             }
-
-            // 绘制
-            const cv::Point2f armor_center = (bi.center + bj.center) * 0.5f;
-            drawArmor(g_img, quad, armor_center, center_color, pose_ok, rvec, tvec, K_, D_);
-            cv::putText(g_img, tag,
-                        cv::Point((int)quad[0].x - 10, (int)quad[0].y - 10),
-                        cv::FONT_HERSHEY_SIMPLEX, 0.9, center_color, 2);
         }
     }
+
+    bool DetectorNodelet::appendArmor(const cv::Point2f quad[4],
+                                     bool is_red, bool is_large,
+                                     int number, float confidence,
+                                     cv::Mat &canvas)
+    {
+        const cv::Scalar center_color = is_red ? cv::Scalar(0, 0, 255)
+                                               : cv::Scalar(0, 255, 0);
+        const int armor_id = det_id_++;
+        std::string tag = std::string(is_large ? "L" : "S") + std::to_string(armor_id);
+
+        if (number >= 0 && number < 9)
+        {
+            static const char *number_names[9] = {
+                "guard", "1", "2", "3", "4", "5", "outpost", "base", "base"};
+            tag += " " + std::string(is_red ? "red:" : "blue:") + number_names[number];
+        }
+
+        // 位姿解算
+        cv::Mat rvec, tvec;
+        bool pose_ok = false;
+        if (!K_.empty())
+        {
+            const double armor_w = is_large ? armor_large_w_ : armor_small_w_;
+            const double armor_l = is_large ? armor_large_l_ : armor_small_l_;
+            pose_ok = solveArmorPose(quad, armor_w, armor_l, K_, D_, rvec, tvec);
+        }
+
+        if (pose_ok)
+        {
+            const double rot_deg = std::sqrt(rvec.at<double>(0) * rvec.at<double>(0) +
+                                             rvec.at<double>(1) * rvec.at<double>(1) +
+                                             rvec.at<double>(2) * rvec.at<double>(2)) *
+                                   57.3;
+            ROS_DEBUG_THROTTLE(0.5, "[%s] t=(%.2f,%.2f,%.2f) |r|=%.1fdeg",
+                               tag.c_str(), tvec.at<double>(0), tvec.at<double>(1),
+                               tvec.at<double>(2), rot_deg);
+
+            cv::Mat R;
+            cv::Rodrigues(rvec, R);
+            tf2::Matrix3x3 m(R.at<double>(0, 0), R.at<double>(0, 1), R.at<double>(0, 2),
+                             R.at<double>(1, 0), R.at<double>(1, 1), R.at<double>(1, 2),
+                             R.at<double>(2, 0), R.at<double>(2, 1), R.at<double>(2, 2));
+            tf2::Quaternion q;
+            m.getRotation(q);
+
+            geometry_msgs::TransformStamped tf_msg;
+            tf_msg.header = cur_header_; // 图像时间戳
+            tf_msg.child_frame_id = "armor_" + std::to_string(armor_id);
+            tf_msg.transform.translation.x = tvec.at<double>(0);
+            tf_msg.transform.translation.y = tvec.at<double>(1);
+            tf_msg.transform.translation.z = tvec.at<double>(2);
+            tf_msg.transform.rotation.x = q.x();
+            tf_msg.transform.rotation.y = q.y();
+            tf_msg.transform.rotation.z = q.z();
+            tf_msg.transform.rotation.w = q.w();
+            tf_broadcaster_.sendTransform(tf_msg);
+
+            armor_detector::Detection d;
+            d.id = armor_id;
+            d.is_red = is_red;
+            d.is_large_armor = is_large;
+            d.pose.position.x = tvec.at<double>(0);
+            d.pose.position.y = tvec.at<double>(1);
+            d.pose.position.z = tvec.at<double>(2);
+            d.pose.orientation.x = q.x();
+            d.pose.orientation.y = q.y();
+            d.pose.orientation.z = q.z();
+            d.pose.orientation.w = q.w();
+            for (int n = 0; n < 4; ++n)
+            {
+                d.corners[n].x = quad[n].x;
+                d.corners[n].y = quad[n].y;
+                d.corners[n].z = 0.0f;
+            }
+            d.confidence = confidence;
+            dets_.push_back(d);
+        }
+
+        const cv::Point2f armor_center =
+            (quad[0] + quad[1] + quad[2] + quad[3]) * 0.25f;
+        drawArmor(canvas, quad, armor_center, center_color, pose_ok, rvec, tvec, K_, D_);
+        cv::putText(canvas, tag,
+                    cv::Point((int)quad[0].x - 10, (int)quad[0].y - 10),
+                    cv::FONT_HERSHEY_SIMPLEX, 0.9, center_color, 2);
+        return pose_ok;
+    }
+
+    void DetectorNodelet::detectNnArmors(const cv::Mat &image, cv::Mat &canvas)
+    {
+        const auto begin = std::chrono::steady_clock::now();
+        const auto armors = nn_detector_.detect(image);
+        const double elapsed_ms = std::chrono::duration<double, std::milli>(
+            std::chrono::steady_clock::now() - begin).count();
+
+        // 仅统计成功完成的检测调用；前 10 帧预热，不含 PnP、绘图和 ROS 发布。
+        ++nn_frames_;
+        if (nn_frames_ > 10)
+        {
+            ++nn_timed_frames_;
+            nn_total_ms_ += elapsed_ms;
+            if (nn_timed_frames_ % 100 == 0)
+            {
+                NODELET_INFO("NN detect mean: %.2f ms over %zu frames (10 warmup frames excluded).",
+                             nn_total_ms_ / nn_timed_frames_, nn_timed_frames_);
+            }
+        }
+
+        for (const auto &armor : armors)
+        {
+            const auto &q = armor.corners; // 左上、右上、右下、左下
+            const double avg_len = (cv::norm(q[3] - q[0]) + cv::norm(q[2] - q[1])) * 0.5;
+            if (avg_len <= 1e-6)
+                continue;
+            const cv::Point2f left_center = (q[0] + q[3]) * 0.5f;
+            const cv::Point2f right_center = (q[1] + q[2]) * 0.5f;
+            const double ratio = std::abs(right_center.x - left_center.x) / avg_len;
+            // 沿用传统几何启发式，不是网络输出的大小类别。
+            const bool is_large = ratio >= pair_param_.large_ratio;
+            appendArmor(q.data(), armor.color == 1, is_large,
+                        armor.number, armor.confidence, canvas);
+        }
+    }
+
     void DetectorNodelet::reconfigureCallback(Config &config, uint32_t level)
     {
         (void)level;
