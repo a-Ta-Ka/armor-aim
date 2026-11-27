@@ -7,4 +7,6 @@ devel*/
 install*/
 *.bag
 frames/
+!src/armor_detector/docs/task9/frames/
+!src/armor_detector/docs/task9/frames/**
 __pycache__/

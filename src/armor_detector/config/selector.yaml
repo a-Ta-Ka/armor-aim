@@ -1,0 +1,30 @@
+selector:
+  detection_topic: /ft/detection
+  target_topic:    /ft/target
+  marker_topic:    /ft/target/marker
+  queue_size:      2
+
+  # 任务 9 的模型参数
+  predict_T:    0.2     # 提前量 s，任务书要求可配
+  radius:       0.205   # 车体中心 -> 装甲板中心，blue_1 最小二乘标定
+  plate_count:  4       # 每 90 度一块板
+
+  # 遮挡 / 关联
+  lost_timeout: 0.5     # 超过它 valid=false 且清空轨迹
+  dt_max:       0.5     # 帧间隔超过它按重新初始化处理；与 lost_timeout 对齐，避免短遮挡重置相位
+  gate_center:  0.4     # 车体中心关联门限 m
+  face_on_min:  0.30    # 太斜的板不作为观测
+
+  # 车体中心 alpha-beta
+  alpha_center: 0.10
+  beta_center:  0.002
+  max_speed:    2.0
+
+  # 相位/角速度 alpha-beta
+  alpha_theta:  0.5
+  beta_theta:   0.03
+  face_hysteresis: 0.35  # rad, 防止换面边界处 i 来回抖动
+  max_omega:    8.0
+
+  # 法向垂直分量平滑
+  n_y_alpha:    0.2

@@ -151,9 +151,17 @@ Visualization Manager:
       Update Interval: 0
       Value: true
     - Class: rviz/Marker
-      Enabled: true
+      Enabled: false
       Marker Topic: /ft/debug/marker
       Name: Marker
+      Namespaces:
+        {}
+      Queue Size: 100
+      Value: true
+    - Class: rviz/MarkerArray
+      Enabled: true
+      Marker Topic: /ft/target/marker
+      Name: TargetMarker
       Namespaces:
         {}
       Queue Size: 100

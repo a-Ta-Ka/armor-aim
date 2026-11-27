@@ -71,5 +71,17 @@ namespace armor_detector
         int s_min = 80, s_max = 255;
         int v_min = 160, v_max = 255;
     };
+  
+    // 单块装甲板观测结果
+    struct Observation
+    {
+        cv::Point3d p;        // 装甲板中心，相机坐标系
+        cv::Point3d n;        // 装甲板 z 轴朝向：由装甲板指向车体中心
+        cv::Point3d c;        // 车体中心观测值 = p + radius * n
+        double alpha = 0.0;   // 该装甲板的相位角/角度
+        double face_on = 0.0; // 正对程度
+        int det_id = 0;       // 检测结果 ID
+        bool red = false;
+    };
 
 } // namespace armor_detector

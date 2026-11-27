@@ -28,6 +28,7 @@ add_message_files(
   Detection.msg
   DetectionFrame.msg
   TrackTarget.msg
+  TargetSelect.msg
 )
 
 generate_messages(
@@ -55,6 +56,7 @@ include
 add_library(${PROJECT_NAME}
     src/detector.cpp
     src/tracker.cpp
+    src/selector.cpp
     src/tv_detector.cpp
     src/nn_detector.cpp
     src/geometry.cpp

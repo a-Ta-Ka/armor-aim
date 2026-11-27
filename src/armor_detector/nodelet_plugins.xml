@@ -5,4 +5,7 @@
     <class name="armor_detector/TrackerNodelet" type="armor_detector::TrackerNodelet" base_class_type="nodelet::Nodelet">
     <description>Constant velocity armor tracker</description>
   </class>
+    <class name="armor_detector/SelectorNodelet" type="armor_detector::SelectorNodelet" base_class_type="nodelet::Nodelet">
+    <description>Rotating car model and armor plate selector</description>
+  </class>
 </library>

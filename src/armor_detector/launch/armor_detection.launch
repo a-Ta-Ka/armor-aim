@@ -3,6 +3,7 @@
       <arg name="fixed_frame" default="camera_optical_frame" />
       <arg name="detection_mode" default="tv" />
       <arg name="nn_model_path" default="/root/bags/nn_model/armor.onnx" />
+      <arg name="rviz_config" default="$(find armor_detector)/rviz/armor_detector.rviz" />
 
       <param name="/use_sim_time" value="true" />
 
@@ -12,6 +13,7 @@
 
       <rosparam file="$(find armor_detector)/config/detector.yaml" command="load"/>
       <rosparam file="$(find armor_detector)/config/tracker.yaml" command="load"/>
+      <rosparam file="$(find armor_detector)/config/selector.yaml" command="load"/>
 
       <node pkg="nodelet" type="nodelet" name="armor_manager" args="manager" output="screen">
       <param name="num_worker_threads" value="1"/>
@@ -26,9 +28,12 @@
       <node pkg="nodelet" type="nodelet" name="tracker"
           args="load armor_detector/TrackerNodelet armor_manager" output="screen" />
 
+      <node pkg="nodelet" type="nodelet" name="selector"
+          args="load armor_detector/SelectorNodelet armor_manager" output="screen" />
+
       <node pkg="rqt_image_view" type="rqt_image_view" name="rqt_image_view"
           output="screen" args="/ft/debug/image" />
           
-      <node pkg="rviz" type="rviz" name="rviz" args="-d $(find armor_detector)/rviz/armor_detector.rviz -f $(arg fixed_frame)" output="screen" />
+      <node pkg="rviz" type="rviz" name="rviz" args="-d $(arg rviz_config) -f $(arg fixed_frame)" output="screen" />
 
 </launch>
