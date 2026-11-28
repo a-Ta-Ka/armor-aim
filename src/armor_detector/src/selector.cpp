@@ -53,6 +53,22 @@ namespace armor_detector
         n.param<double>("max_omega", max_omega_, max_omega_);
         n.param<double>("max_speed", max_speed_, max_speed_);
         n.param<double>("n_y_alpha", n_y_alpha_, n_y_alpha_);
+        n.param<double>("baseline_q_pos", baseline_q_pos_, baseline_q_pos_);
+        n.param<double>("baseline_q_vel", baseline_q_vel_, baseline_q_vel_);
+        n.param<double>("baseline_r_pos", baseline_r_pos_, baseline_r_pos_);
+
+        baseline_kf_.init(6, 3, 0);
+        baseline_kf_.transitionMatrix = cv::Mat::eye(6, 6, CV_64F);
+        baseline_kf_.measurementMatrix = cv::Mat::eye(3, 6, CV_64F);
+        baseline_kf_.statePost = cv::Mat::zeros(6, 1, CV_64F);
+        baseline_kf_.errorCovPost = cv::Mat::eye(6, 6, CV_64F);
+        baseline_kf_.processNoiseCov = cv::Mat::zeros(6, 6, CV_64F);
+        for (int i = 0; i < 3; ++i)
+            baseline_kf_.processNoiseCov.at<double>(i, i) = baseline_q_pos_;
+        for (int i = 3; i < 6; ++i)
+            baseline_kf_.processNoiseCov.at<double>(i, i) = baseline_q_vel_;
+        baseline_kf_.measurementNoiseCov =
+            cv::Mat::eye(3, 3, CV_64F) * baseline_r_pos_;
 
         det_sub_ = n.subscribe(detection_topic_, queue_size_, &SelectorNodelet::onDetection, this);
         target_pub_ = n.advertise<armor_detector::TargetSelect>(target_topic_, queue_size_);
@@ -61,8 +77,8 @@ namespace armor_detector
         ROS_INFO("selector: radius=%.3f m plate_count=%d T=%.3f s",
                  radius_, plate_count_, predict_T_);
     }
-    bool SelectorNodelet::makeObservation(const armor_detector::Detection &d, Observation &obs) const
-    // 转换计算小车中心
+   
+    bool SelectorNodelet::makeObservation(const armor_detector::Detection &d, Observation &obs) const // 转换计算小车中心
     {
         const auto &p = d.pose.position;
         if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z))
@@ -102,8 +118,8 @@ namespace armor_detector
         obs.red = d.is_red;
         return true;
     }
-    void SelectorNodelet::initializeTarget(const Observation &obs, const std_msgs::Header &header, uint32_t id) 
-    // 初始化跟踪
+   
+    void SelectorNodelet::initializeTarget(const Observation &obs, const std_msgs::Header &header, uint32_t id) // 初始化跟踪
     {
         has_target_ = true;
         target_id_ = id;
@@ -119,10 +135,8 @@ namespace armor_detector
         state_stamp_ = header.stamp.toSec();
         last_hit_stamp_ = state_stamp_;
 
-        has_last_p_ = true;
-        last_p_obs_ = obs.p;
-        last_p_stamp_ = state_stamp_;
-        v_obs_ = cv::Point3d(0, 0, 0);
+        baseline_ready_ = false;
+        baseline_face_ = -1;
 
         ROS_INFO("selector: target %u init red=%d p=(%.2f,%.2f,%.2f) "
                  "C=(%.2f,%.2f,%.2f) alpha=%.1f deg",
@@ -130,8 +144,8 @@ namespace armor_detector
                  obs.p.x, obs.p.y, obs.p.z,
                  C_.x, C_.y, C_.z, theta_ * 180.0 / M_PI);
     }
-    void SelectorNodelet::updateTarget(const Observation &obs, double dt)
-    // 跟踪更新
+   
+    int SelectorNodelet::updateTarget(const Observation &obs, double dt) // 跟踪更新
     {
         const double delta = 2.0 * M_PI / static_cast<double>(plate_count_);
 
@@ -168,7 +182,7 @@ namespace armor_detector
             omega_ = -max_omega_;
         face_ = best_i;
 
-        // 法向变化应该很小
+        // 法向y变化应该很小，所以低通
         n_y_ = (1.0 - n_y_alpha_) * n_y_ + n_y_alpha_ * obs.n.y;
 
         // 2) 车体中心滤波
@@ -178,9 +192,95 @@ namespace armor_detector
         if (dt > 1e-4)
             V_ += beta_center_ * (e / dt);
         clampNorm(V_, max_speed_);
+
+        return best_i;
     }
-    cv::Point3d SelectorNodelet::armorPosition(const cv::Point3d &C, double theta, int face) const 
-    // 回推装甲板
+
+    void SelectorNodelet::updateBaseline(const Observation &obs, double t, int face,
+                                         cv::Point3d &velocity)//(基)给观测量
+    {
+        velocity = cv::Point3d(0, 0, 0);
+
+        //初不初始化
+        if (!baseline_ready_ || face != baseline_face_)
+        {
+            baseline_kf_.transitionMatrix = cv::Mat::eye(6, 6, CV_64F);
+            baseline_kf_.statePost = cv::Mat::zeros(6, 1, CV_64F);
+            baseline_kf_.statePost.at<double>(0) = obs.p.x;
+            baseline_kf_.statePost.at<double>(1) = obs.p.y;
+            baseline_kf_.statePost.at<double>(2) = obs.p.z;
+
+            baseline_kf_.errorCovPost = cv::Mat::eye(6, 6, CV_64F);
+            for (int i = 3; i < 6; ++i)
+                baseline_kf_.errorCovPost.at<double>(i, i) = 1.0;
+
+            baseline_ready_ = true;
+            baseline_face_ = face;
+            baseline_stamp_ = t;
+            return;
+        }
+
+        const double dt = t - baseline_stamp_;
+        if (dt > 1e-4)
+        {
+            baseline_kf_.transitionMatrix = cv::Mat::eye(6, 6, CV_64F);
+            baseline_kf_.transitionMatrix.at<double>(0, 3) = dt;
+            baseline_kf_.transitionMatrix.at<double>(1, 4) = dt;
+            baseline_kf_.transitionMatrix.at<double>(2, 5) = dt;
+            baseline_kf_.predict();
+            baseline_stamp_ = t;
+        }
+
+        cv::Mat z(3, 1, CV_64F);
+        z.at<double>(0) = obs.p.x;
+        z.at<double>(1) = obs.p.y;
+        z.at<double>(2) = obs.p.z;
+        baseline_kf_.correct(z);
+
+        // 防爆
+        cv::Point3d bv(baseline_kf_.statePost.at<double>(3),
+                       baseline_kf_.statePost.at<double>(4),
+                       baseline_kf_.statePost.at<double>(5));
+        clampNorm(bv, max_speed_);
+        baseline_kf_.statePost.at<double>(3) = bv.x;
+        baseline_kf_.statePost.at<double>(4) = bv.y;
+        baseline_kf_.statePost.at<double>(5) = bv.z;
+        velocity = bv;
+        baseline_stamp_ = t;
+        baseline_face_ = face;
+    }
+   
+    cv::Point3d SelectorNodelet::predictBaseline(double t, cv::Point3d &velocity)// (基)计算位置和速度
+    {
+        velocity = cv::Point3d(0, 0, 0);
+        if (!baseline_ready_)
+            return cv::Point3d(0, 0, 0);
+
+        const double dt = t - baseline_stamp_;
+        if (dt > 1e-4)
+        {
+            baseline_kf_.transitionMatrix = cv::Mat::eye(6, 6, CV_64F);
+            baseline_kf_.transitionMatrix.at<double>(0, 3) = dt;
+            baseline_kf_.transitionMatrix.at<double>(1, 4) = dt;
+            baseline_kf_.transitionMatrix.at<double>(2, 5) = dt;
+            baseline_kf_.predict();
+
+            cv::Point3d bv(baseline_kf_.statePost.at<double>(3),
+                           baseline_kf_.statePost.at<double>(4),
+                           baseline_kf_.statePost.at<double>(5));
+            clampNorm(bv, max_speed_);
+            baseline_kf_.statePost.at<double>(3) = bv.x;
+            baseline_kf_.statePost.at<double>(4) = bv.y;
+            baseline_kf_.statePost.at<double>(5) = bv.z;
+            baseline_stamp_ = t;
+        }
+
+        const cv::Mat &s = baseline_kf_.statePost;
+        velocity = cv::Point3d(s.at<double>(3), s.at<double>(4), s.at<double>(5));
+        return cv::Point3d(s.at<double>(0), s.at<double>(1), s.at<double>(2));
+    }
+  
+    cv::Point3d SelectorNodelet::armorPosition(const cv::Point3d &C, double theta, int face) const // 回推装甲板
     {
         const double delta = 2.0 * M_PI / static_cast<double>(plate_count_);
         const double phi = theta + face * delta;
@@ -189,10 +289,10 @@ namespace armor_detector
                                -radius_ * n_y_,
                                radius_ * h * std::sin(phi));
     }
+ 
     cv::Point3d SelectorNodelet::predictArmor(double T, const cv::Point3d &p_current,
                                               const cv::Point3d &V, double theta,
-                                              int face) const 
-    // 状态预测
+                                              int face) const // 状态预测
 
     {
         const double delta = 2.0 * M_PI / static_cast<double>(plate_count_);
@@ -204,8 +304,7 @@ namespace armor_detector
                            radius_ * (std::sin(phi_f) - std::sin(phi)));
     }
 
-    void SelectorNodelet::onDetection(const armor_detector::DetectionFrame::ConstPtr &msg)
-    // 主执行
+    void SelectorNodelet::onDetection(const armor_detector::DetectionFrame::ConstPtr &msg) // 主执行
     {
         //收/算数据
         const std_msgs::Header &header = msg->header;
@@ -234,8 +333,10 @@ namespace armor_detector
                     return a.p.z > b.p.z;
                 });
             initializeTarget(*best, header, next_id_++);
+            cv::Point3d baseline_vel;
+            updateBaseline(*best, t, face_, baseline_vel);
             const cv::Point3d p_pred =predictArmor(predict_T_, best->p, V_, theta_, face_);
-            const cv::Point3d p_base = best->p + v_obs_ * predict_T_;
+            const cv::Point3d p_base = best->p + baseline_vel * predict_T_;
             publishTarget(header, true, false, best->p, p_pred, p_base, C_, theta_, omega_, face_);
             return;
         }
@@ -251,6 +352,8 @@ namespace armor_detector
         {
             has_target_ = false;
             target_id_ = 0;
+            baseline_ready_ = false;
+            baseline_face_ = -1;
             publishInvalid(header);
             return;
         }
@@ -275,25 +378,21 @@ namespace armor_detector
         // 有端联想(有数据)
         if (best >= 0)
         {
+            int face_now = face_;
             if (dt > dt_max_)
             {
                 initializeTarget(obs[best], header, target_id_);
+                face_now = face_;
             }
             else
             {
-                if (has_last_p_ && t - last_p_stamp_ > 1e-3 && t - last_p_stamp_ < 0.3)
-                {
-                    const cv::Point3d v_raw = (obs[best].p - last_p_obs_) / (t - last_p_stamp_);
-                    v_obs_ = 0.5 * v_obs_ + 0.5 * v_raw;
-                    clampNorm(v_obs_, 3.0);
-                }
-                last_p_obs_ = obs[best].p;
-                last_p_stamp_ = t;
-                has_last_p_ = true;
-
-                updateTarget(obs[best], dt);
+                face_now = updateTarget(obs[best], dt);
                 state_stamp_ = t;
             }
+
+            cv::Point3d baseline_vel;
+            updateBaseline(obs[best], t, face_now, baseline_vel);
+
             last_hit_stamp_ = t;
             
             cv::Point3d p_anchor = armorPosition(C_, theta_, face_);
@@ -301,7 +400,7 @@ namespace armor_detector
             if (std::sqrt(anchor_err.x*anchor_err.x+anchor_err.y*anchor_err.y+anchor_err.z * anchor_err.z) > 0.15)
                 p_anchor = obs[best].p;
             const cv::Point3d p_pred = predictArmor(predict_T_, p_anchor, V_, theta_, face_);
-            const cv::Point3d p_base = obs[best].p + v_obs_ * predict_T_;
+            const cv::Point3d p_base = obs[best].p + baseline_vel * predict_T_;
             publishTarget(header, true, false, obs[best].p, p_pred, p_base, C_, theta_, omega_, face_);
             return;
         }
@@ -311,6 +410,8 @@ namespace armor_detector
         {
             has_target_ = false;
             target_id_ = 0;
+            baseline_ready_ = false;
+            baseline_face_ = -1;
             publishInvalid(header);
             return;
         }
@@ -322,7 +423,13 @@ namespace armor_detector
         const double thc = theta_ + omega_ * coast;
         const cv::Point3d p_cur = armorPosition(Cc, thc, face_);
         const cv::Point3d p_pred = predictArmor(predict_T_, p_cur, V_, thc, face_);
-        const cv::Point3d p_base = p_cur + v_obs_ * predict_T_;
+        cv::Point3d baseline_vel;
+        cv::Point3d p_base = p_cur;
+        if (baseline_ready_)
+        {
+            const cv::Point3d bpos = predictBaseline(t, baseline_vel);
+            p_base = bpos + baseline_vel * predict_T_;
+        }
         publishTarget(header, false, true, p_cur, p_pred, p_base, Cc, thc, omega_, face_);
     }
 
@@ -330,8 +437,7 @@ namespace armor_detector
         const std_msgs::Header &header, bool valid, bool predicted,
         const cv::Point3d &position, const cv::Point3d &position_predict,
         const cv::Point3d &position_baseline, const cv::Point3d &car_center,
-        double theta, double omega, int face)
-    // 数据打包
+        double theta, double omega, int face) // 数据打包
     {
         armor_detector::TargetSelect out;
         out.header = header;
@@ -355,8 +461,7 @@ namespace armor_detector
                        position_baseline, valid, predicted);
     }
 
-    void SelectorNodelet::publishInvalid(const std_msgs::Header &header)
-    // 跟丢清除
+    void SelectorNodelet::publishInvalid(const std_msgs::Header &header)// 跟丢清除
     {
         armor_detector::TargetSelect out;
         out.header = header;
@@ -379,8 +484,7 @@ namespace armor_detector
     void SelectorNodelet::publishMarkers(
         const std_msgs::Header &header, const cv::Point3d &car_center,
         const cv::Point3d &current, const cv::Point3d &predicted,
-        const cv::Point3d &baseline, bool valid, bool extrapolated)
-    // 画在rviz里
+        const cv::Point3d &baseline, bool valid, bool extrapolated) // 画在rviz里
     {
         std_msgs::Header h = header;
         if (h.frame_id.empty())
